@@ -2,7 +2,15 @@
 // GET  → show login form
 // POST → validate credentials, redirect with code
 import type { IncomingMessage, ServerResponse } from "http";
-import * as qs from "querystring";
+// Vercel augments IncomingMessage with body/query at runtime
+type VercelRequest  = IncomingMessage & { body?: unknown; query: Record<string, string | string[]> };
+type VercelResponse = ServerResponse  & {
+  status(code: number): VercelResponse;
+  json(body: unknown): void;
+  send(body: string): void;
+  redirect(status: number, url: string): void;
+  end(): void;
+};
 import {
   safeCompare,
   validateUserCredentials,
@@ -13,41 +21,39 @@ import {
   OAUTH_PASSWORD,
 } from "../../src/oauth";
 
-export default async function handler(req: IncomingMessage, res: ServerResponse): Promise<void> {
+export default function handler(req: VercelRequest, res: VercelResponse): void {
   const method = req.method ?? "GET";
-  const url    = new URL(req.url ?? "/", "http://localhost");
 
   // ── GET: show the login form ──────────────────────────────────
   if (method === "GET") {
-    const clientId    = url.searchParams.get("client_id")    ?? "";
-    const redirectUri = url.searchParams.get("redirect_uri") ?? "";
-    const scope       = url.searchParams.get("scope")        ?? "mcp";
-    const state       = url.searchParams.get("state")        ?? "";
-    const respType    = url.searchParams.get("response_type") ?? "";
+    const q           = req.query as Record<string, string>;
+    const clientId    = q["client_id"]     ?? "";
+    const redirectUri = q["redirect_uri"]  ?? "";
+    const scope       = q["scope"]         ?? "mcp";
+    const state       = q["state"]         ?? "";
+    const respType    = q["response_type"] ?? "";
 
     if (respType !== "code") {
-      sendJSON(res, 400, { error: "unsupported_response_type" });
+      res.status(400).json({ error: "unsupported_response_type" });
       return;
     }
     if (!clientId || !safeCompare(clientId, OAUTH_CLIENT_ID)) {
-      sendJSON(res, 400, { error: "invalid_client" });
+      res.status(400).json({ error: "invalid_client" });
       return;
     }
     if (!redirectUri || !isRedirectUriAllowed(redirectUri)) {
-      sendJSON(res, 400, { error: "invalid_redirect_uri" });
+      res.status(400).json({ error: "invalid_redirect_uri" });
       return;
     }
 
     res.setHeader("Content-Security-Policy", "default-src 'none'; style-src 'unsafe-inline'; form-action 'self'");
-    res.writeHead(200, { "Content-Type": "text/html; charset=utf-8" });
-    res.end(renderAuthorizePage({ clientId, redirectUri, scope, state }));
+    res.status(200).send(renderAuthorizePage({ clientId, redirectUri, scope, state }));
     return;
   }
 
   // ── POST: process login ───────────────────────────────────────
   if (method === "POST") {
-    const body = await getParsedBody(req);
-
+    const body        = (req.body ?? {}) as Record<string, string>;
     const clientId    = body["client_id"]    ?? "";
     const redirectUri = body["redirect_uri"] ?? "";
     const scope       = body["scope"]        ?? "mcp";
@@ -57,8 +63,7 @@ export default async function handler(req: IncomingMessage, res: ServerResponse)
 
     const rerender = (error: string): void => {
       res.setHeader("Content-Security-Policy", "default-src 'none'; style-src 'unsafe-inline'; form-action 'self'");
-      res.writeHead(400, { "Content-Type": "text/html; charset=utf-8" });
-      res.end(renderAuthorizePage({ clientId, redirectUri, scope, state, error }));
+      res.status(400).send(renderAuthorizePage({ clientId, redirectUri, scope, state, error }));
     };
 
     if (!safeCompare(clientId, OAUTH_CLIENT_ID)) { rerender("Invalid client."); return; }
@@ -74,42 +79,9 @@ export default async function handler(req: IncomingMessage, res: ServerResponse)
     target.searchParams.set("code", code);
     if (state) target.searchParams.set("state", state);
 
-    res.writeHead(302, { Location: target.toString() });
-    res.end();
+    res.redirect(302, target.toString());
     return;
   }
 
-  sendJSON(res, 405, { error: "Method Not Allowed" });
-}
-
-function sendJSON(res: ServerResponse, status: number, body: unknown): void {
-  const payload = JSON.stringify(body);
-  res.writeHead(status, { "Content-Type": "application/json", "Content-Length": Buffer.byteLength(payload) });
-  res.end(payload);
-}
-
-async function getParsedBody(req: IncomingMessage): Promise<Record<string, string>> {
-  const r = req as IncomingMessage & { body?: unknown };
-  if (r.body !== undefined && r.body !== null) {
-    // Already a parsed object (Vercel pre-parses application/x-www-form-urlencoded)
-    if (typeof r.body === "object" && !Buffer.isBuffer(r.body)) {
-      return r.body as Record<string, string>;
-    }
-    // Buffer
-    if (Buffer.isBuffer(r.body)) {
-      return qs.parse(r.body.toString("utf8")) as Record<string, string>;
-    }
-    // String
-    if (typeof r.body === "string") {
-      return qs.parse(r.body) as Record<string, string>;
-    }
-  }
-  // Fallback: stream (Docker / local)
-  const raw = await new Promise<string>((resolve, reject) => {
-    const chunks: Buffer[] = [];
-    req.on("data", (c: Buffer) => chunks.push(c));
-    req.on("end",  () => resolve(Buffer.concat(chunks).toString("utf8")));
-    req.on("error", reject);
-  });
-  return qs.parse(raw) as Record<string, string>;
+  res.status(405).json({ error: "Method Not Allowed" });
 }
