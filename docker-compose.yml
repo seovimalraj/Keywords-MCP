@@ -1,0 +1,22 @@
+services:
+  keywords-mcp:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: keywords-mcp:latest
+    container_name: keywords-mcp
+    restart: unless-stopped
+    ports:
+      - "3000:3000"
+    environment:
+      NODE_ENV: production
+      PORT: 3000
+      # Set these in Dokploy's environment variable UI — do NOT hardcode secrets here
+      GEMINI_API_KEY: ${GEMINI_API_KEY}
+      MCP_API_KEY: ${MCP_API_KEY}
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost:3000/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
