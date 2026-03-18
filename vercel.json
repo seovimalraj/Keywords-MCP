@@ -2,14 +2,20 @@
   "version": 2,
   "name": "keywords-mcp",
   "builds": [
-    { "src": "api/mcp.ts",   "use": "@vercel/node" },
-    { "src": "api/index.ts", "use": "@vercel/node" },
-    { "src": "public/**",    "use": "@vercel/static" }
+    { "src": "api/mcp.ts",              "use": "@vercel/node" },
+    { "src": "api/index.ts",            "use": "@vercel/node" },
+    { "src": "api/oauth/authorize.ts",  "use": "@vercel/node" },
+    { "src": "api/oauth/token.ts",      "use": "@vercel/node" },
+    { "src": "api/oauth/revoke.ts",     "use": "@vercel/node" },
+    { "src": "public/**",               "use": "@vercel/static" }
   ],
   "routes": [
-    { "src": "/api/mcp",   "dest": "/api/mcp.ts"   },
-    { "src": "/api/info",  "dest": "/api/index.ts" },
-    { "src": "/(.*)",      "dest": "/public/$1"    }
+    { "src": "/api/mcp",             "dest": "/api/mcp.ts"             },
+    { "src": "/api/info",            "dest": "/api/index.ts"           },
+    { "src": "/oauth/authorize",     "dest": "/api/oauth/authorize.ts" },
+    { "src": "/oauth/token",         "dest": "/api/oauth/token.ts"     },
+    { "src": "/oauth/revoke",        "dest": "/api/oauth/revoke.ts"    },
+    { "src": "/(.*)",                "dest": "/public/$1"              }
   ],
   "headers": [
     {
