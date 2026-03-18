@@ -41,7 +41,19 @@ export default function handler(req: VercelRequest, res: VercelResponse): void {
   const grantType   = body["grant_type"] ?? "";
   const { clientId, clientSecret } = extractClientCredentials(body, req);
 
+  // Log for Vercel function diagnostics (visible in Vercel → Functions → Logs)
+  console.log("[token] grant_type:", grantType);
+  console.log("[token] client_id present:", !!clientId);
+  console.log("[token] client_secret present:", !!clientSecret);
+  console.log("[token] code present:", !!body["code"]);
+  console.log("[token] redirect_uri:", body["redirect_uri"] ?? "(none)");
+  console.log("[token] auth header:", req.headers["authorization"] ? "present" : "absent");
+  console.log("[token] content-type:", req.headers["content-type"] ?? "(none)");
+  console.log("[token] OAUTH_CLIENT_ID set:", !!(process.env.OAUTH_CLIENT_ID));
+  console.log("[token] OAUTH_CLIENT_SECRET set:", !!(process.env.OAUTH_CLIENT_SECRET));
+
   if (!validateClientCredentials(clientId, clientSecret)) {
+    console.log("[token] FAILED: invalid_client — expected id:", process.env.OAUTH_CLIENT_ID, "got:", clientId);
     res.status(401).json({ error: "invalid_client" });
     return;
   }
@@ -51,9 +63,11 @@ export default function handler(req: VercelRequest, res: VercelResponse): void {
     const redirectUri = body["redirect_uri"] ?? "";
     const tokens = exchangeCode(code, clientId, clientSecret, redirectUri);
     if (!tokens) {
+      console.log("[token] FAILED: invalid_grant — code:", code.slice(0, 20) + "...");
       res.status(400).json({ error: "invalid_grant", error_description: "Code invalid or expired" });
       return;
     }
+    console.log("[token] SUCCESS: issued token pair");
     res.status(200).json(tokens);
     return;
   }
@@ -69,5 +83,6 @@ export default function handler(req: VercelRequest, res: VercelResponse): void {
     return;
   }
 
+  console.log("[token] FAILED: unsupported_grant_type:", grantType);
   res.status(400).json({ error: "unsupported_grant_type" });
 }
