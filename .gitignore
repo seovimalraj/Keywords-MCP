@@ -1,0 +1,14 @@
+# Dependencies
+node_modules/
+
+# Build output
+dist/
+
+# Environment variables – never commit real keys
+.env
+
+# OS / editor
+.DS_Store
+Thumbs.db
+.vscode/
+*.log

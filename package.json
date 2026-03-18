@@ -1,0 +1,35 @@
+{
+  "name": "keywords-mcp",
+  "version": "1.0.0",
+  "description": "MCP server for keyword research using Google Autocomplete, Google Trends and Answer-the-Public style analysis",
+  "main": "dist/index.js",
+  "scripts": {
+    "build": "tsc",
+    "build:watch": "tsc --watch",
+    "start": "node dist/index.js",
+    "dev": "ts-node src/index.ts"
+  },
+  "keywords": [
+    "mcp",
+    "keyword-research",
+    "seo",
+    "google-trends"
+  ],
+  "author": "",
+  "license": "ISC",
+  "type": "commonjs",
+  "dependencies": {
+    "@google/generative-ai": "^0.24.1",
+    "@modelcontextprotocol/sdk": "^1.27.1",
+    "axios": "^1.13.6",
+    "bottleneck": "^2.19.5",
+    "dotenv": "^17.3.1",
+    "node-cache": "^5.1.2"
+  },
+  "devDependencies": {
+    "@types/node": "^25.5.0",
+    "@types/node-cache": "^4.1.3",
+    "ts-node": "^10.9.2",
+    "typescript": "^5.9.3"
+  }
+}
