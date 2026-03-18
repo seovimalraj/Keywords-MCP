@@ -9,21 +9,33 @@ function sendJSON(res: ServerResponse, status: number, body: unknown): void {
   res.end(payload);
 }
 
-function readRawBody(req: IncomingMessage): Promise<string> {
-  return new Promise((resolve, reject) => {
+async function getParsedBody(req: IncomingMessage): Promise<Record<string, string>> {
+  const r = req as IncomingMessage & { body?: unknown };
+  if (r.body !== undefined && r.body !== null) {
+    if (typeof r.body === "object" && !Buffer.isBuffer(r.body)) {
+      return r.body as Record<string, string>;
+    }
+    if (Buffer.isBuffer(r.body)) {
+      return qs.parse(r.body.toString("utf8")) as Record<string, string>;
+    }
+    if (typeof r.body === "string") {
+      return qs.parse(r.body) as Record<string, string>;
+    }
+  }
+  const raw = await new Promise<string>((resolve, reject) => {
     const chunks: Buffer[] = [];
     req.on("data", (c: Buffer) => chunks.push(c));
     req.on("end",  () => resolve(Buffer.concat(chunks).toString("utf8")));
     req.on("error", reject);
   });
+  return qs.parse(raw) as Record<string, string>;
 }
 
 export default async function handler(req: IncomingMessage, res: ServerResponse): Promise<void> {
   if (req.method === "OPTIONS") { res.writeHead(204); res.end(); return; }
   if (req.method !== "POST")    { sendJSON(res, 405, { error: "Method Not Allowed" }); return; }
 
-  const raw  = await readRawBody(req);
-  const body = qs.parse(raw) as Record<string, string>;
+  const body = await getParsedBody(req);
 
   const clientId     = body["client_id"]     ?? "";
   const clientSecret = body["client_secret"] ?? "";

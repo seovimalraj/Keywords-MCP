@@ -46,8 +46,7 @@ export default async function handler(req: IncomingMessage, res: ServerResponse)
 
   // ── POST: process login ───────────────────────────────────────
   if (method === "POST") {
-    const raw  = await readBody(req);
-    const body = qs.parse(raw) as Record<string, string>;
+    const body = await getParsedBody(req);
 
     const clientId    = body["client_id"]    ?? "";
     const redirectUri = body["redirect_uri"] ?? "";
@@ -89,24 +88,28 @@ function sendJSON(res: ServerResponse, status: number, body: unknown): void {
   res.end(payload);
 }
 
-function readBody(req: IncomingMessage): Promise<string> {
-  // Vercel @vercel/node pre-parses req.body — use it if present to avoid hanging stream
-  const preparsed = (req as IncomingMessage & { body?: unknown }).body;
-  if (preparsed !== undefined) {
-    if (typeof preparsed === "string") return Promise.resolve(preparsed);
-    if (typeof preparsed === "object" && preparsed !== null) {
-      // Already parsed as object — re-serialize to query string format
-      return Promise.resolve(
-        Object.entries(preparsed as Record<string, string>)
-          .map(([k, v]) => `${encodeURIComponent(k)}=${encodeURIComponent(v ?? "")}`)
-          .join("&")
-      );
+async function getParsedBody(req: IncomingMessage): Promise<Record<string, string>> {
+  const r = req as IncomingMessage & { body?: unknown };
+  if (r.body !== undefined && r.body !== null) {
+    // Already a parsed object (Vercel pre-parses application/x-www-form-urlencoded)
+    if (typeof r.body === "object" && !Buffer.isBuffer(r.body)) {
+      return r.body as Record<string, string>;
+    }
+    // Buffer
+    if (Buffer.isBuffer(r.body)) {
+      return qs.parse(r.body.toString("utf8")) as Record<string, string>;
+    }
+    // String
+    if (typeof r.body === "string") {
+      return qs.parse(r.body) as Record<string, string>;
     }
   }
-  return new Promise((resolve, reject) => {
+  // Fallback: stream (Docker / local)
+  const raw = await new Promise<string>((resolve, reject) => {
     const chunks: Buffer[] = [];
     req.on("data", (c: Buffer) => chunks.push(c));
     req.on("end",  () => resolve(Buffer.concat(chunks).toString("utf8")));
     req.on("error", reject);
   });
+  return qs.parse(raw) as Record<string, string>;
 }
