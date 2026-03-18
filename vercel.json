@@ -1,35 +1,21 @@
 {
+  "$schema": "https://openapi.vercel.sh/vercel.json",
   "version": 2,
   "name": "keywords-mcp",
-  "builds": [
-    {
-      "src": "api/**/*.ts",
-      "use": "@vercel/node",
-      "config": {
-        "includeFiles": ["src/**", "node_modules/@modelcontextprotocol/**"]
-      }
-    }
-  ],
-  "routes": [
-    {
-      "src": "/api/mcp",
-      "methods": ["POST", "OPTIONS"],
-      "dest": "/api/mcp.ts"
+  "buildCommand": "npm run build",
+  "functions": {
+    "api/mcp.ts": {
+      "maxDuration": 60
     },
-    {
-      "src": "/api/health",
-      "dest": "/api/index.ts"
-    },
-    {
-      "src": "/",
-      "dest": "/api/index.ts"
+    "api/index.ts": {
+      "maxDuration": 10
     }
-  ],
+  },
   "headers": [
     {
       "source": "/api/(.*)",
       "headers": [
-        { "key": "Access-Control-Allow-Origin", "value": "*" },
+        { "key": "Access-Control-Allow-Origin",  "value": "*" },
         { "key": "Access-Control-Allow-Methods", "value": "GET, POST, OPTIONS" },
         {
           "key": "Access-Control-Allow-Headers",
@@ -37,8 +23,5 @@
         }
       ]
     }
-  ],
-  "env": {
-    "GEMINI_API_KEY": "@gemini-api-key"
-  }
+  ]
 }
