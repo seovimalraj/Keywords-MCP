@@ -61,7 +61,13 @@ export function validateUserCredentials(username: string, password: string): boo
 export function isRedirectUriAllowed(uri: string): boolean {
   const allowlist = process.env.OAUTH_REDIRECT_URIS ?? "";
   if (allowlist) {
-    return allowlist.split(",").map(s => s.trim()).includes(uri);
+    return allowlist.split(",").map(s => s.trim()).some(pattern => {
+      if (pattern.endsWith("*")) {
+        // Prefix wildcard: "https://chatgpt.com/connector/oauth/*"
+        return uri.startsWith(pattern.slice(0, -1));
+      }
+      return uri === pattern;
+    });
   }
   // Default: allow any https:// URI (required for ChatGPT callback)
   return uri.startsWith("https://");
