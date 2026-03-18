@@ -1,9 +1,6 @@
 services:
   keywords-mcp:
-    build:
-      context: .
-      dockerfile: Dockerfile
-    image: keywords-mcp:latest
+    image: ghcr.io/seovimalraj/keywords-mcp:latest
     container_name: keywords-mcp
     restart: unless-stopped
     labels:
