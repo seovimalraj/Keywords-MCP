@@ -25,6 +25,12 @@ RUN npm ci --omit=dev && npm cache clean --force
 # Copy compiled output from builder
 COPY --from=builder /app/dist ./dist
 
+# OCI image labels
+LABEL org.opencontainers.image.source="https://github.com/seovimalraj/Keywords-MCP"
+LABEL org.opencontainers.image.url="https://github.com/seovimalraj/Keywords-MCP"
+LABEL org.opencontainers.image.title="Keywords MCP"
+LABEL org.opencontainers.image.description="MCP server for keyword research – Google, YouTube, Amazon, Pinterest, Wikipedia & Gemini AI"
+
 # Non-root user for security
 RUN addgroup -S mcp && adduser -S mcp -G mcp
 USER mcp

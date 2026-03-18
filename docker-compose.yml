@@ -6,6 +6,10 @@ services:
     image: keywords-mcp:latest
     container_name: keywords-mcp
     restart: unless-stopped
+    labels:
+      org.opencontainers.image.source: "https://github.com/seovimalraj/Keywords-MCP"
+      org.opencontainers.image.url: "https://github.com/seovimalraj/Keywords-MCP"
+      org.opencontainers.image.documentation: "https://github.com/seovimalraj/Keywords-MCP#readme"
     ports:
       - "3000:3000"
     environment:
