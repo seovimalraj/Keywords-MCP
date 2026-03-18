@@ -1,17 +1,16 @@
 {
-  "$schema": "https://openapi.vercel.sh/vercel.json",
   "version": 2,
   "name": "keywords-mcp",
-  "buildCommand": "",
-  "outputDirectory": ".",
-  "functions": {
-    "api/mcp.ts": {
-      "maxDuration": 60
-    },
-    "api/index.ts": {
-      "maxDuration": 10
-    }
-  },
+  "builds": [
+    { "src": "api/mcp.ts",   "use": "@vercel/node" },
+    { "src": "api/index.ts", "use": "@vercel/node" },
+    { "src": "public/**",    "use": "@vercel/static" }
+  ],
+  "routes": [
+    { "src": "/api/mcp",   "dest": "/api/mcp.ts"   },
+    { "src": "/api/info",  "dest": "/api/index.ts" },
+    { "src": "/(.*)",      "dest": "/public/$1"    }
+  ],
   "headers": [
     {
       "source": "/api/(.*)",

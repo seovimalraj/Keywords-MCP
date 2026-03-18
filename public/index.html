@@ -1,0 +1,38 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Keywords MCP</title>
+  <style>
+    body { font-family: system-ui, sans-serif; max-width: 680px; margin: 60px auto; padding: 0 20px; color: #111; }
+    h1 { font-size: 1.8rem; margin-bottom: 0.25rem; }
+    p { color: #555; }
+    code { background: #f3f3f3; padding: 2px 6px; border-radius: 4px; font-size: 0.9em; }
+    pre { background: #f3f3f3; padding: 16px; border-radius: 8px; overflow-x: auto; font-size: 0.85em; }
+    a { color: #0070f3; }
+  </style>
+</head>
+<body>
+  <h1>Keywords MCP</h1>
+  <p>A Model Context Protocol server for keyword research across Google, YouTube, Amazon, Pinterest, Wikipedia and Gemini AI.</p>
+
+  <h2>MCP Endpoint</h2>
+  <pre>POST /api/mcp</pre>
+
+  <h2>Connect via Claude Desktop / ChatGPT</h2>
+  <pre>{
+  "mcpServers": {
+    "keywords": {
+      "command": "npx",
+      "args": ["-y", "mcp-remote", "https://keywords-mcp.vercel.app/api/mcp"]
+    }
+  }
+}</pre>
+
+  <h2>Available Tools (13)</h2>
+  <p>keyword_suggestions · keyword_trends · trending_searches · question_keywords · long_tail_keywords · full_keyword_research · multi_platform_suggestions · wiki_keyword_context · keyword_intent · bulk_keyword_intent · keyword_clusters · content_brief</p>
+
+  <p><a href="/api/mcp">→ API Info</a></p>
+</body>
+</html>
