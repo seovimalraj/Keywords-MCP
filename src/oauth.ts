@@ -1,6 +1,6 @@
 // ─────────────────────────────────────────────
 //  src/oauth.ts – OAuth 2.0 Authorization Code flow
-//  Single-user, in-memory implementation for ChatGPT / MCP clients
+//  Stateless HMAC-signed tokens — works across Vercel serverless invocations
 // ─────────────────────────────────────────────
 import * as crypto from "crypto";
 
@@ -10,34 +10,52 @@ export const OAUTH_CLIENT_SECRET = process.env.OAUTH_CLIENT_SECRET?.trim() ?? ""
 export const OAUTH_USERNAME      = process.env.OAUTH_USERNAME?.trim()       ?? "admin";
 export const OAUTH_PASSWORD      = process.env.OAUTH_PASSWORD?.trim()       ?? "";
 
-const ACCESS_TOKEN_TTL_MS  = parseInt(process.env.OAUTH_TOKEN_TTL ?? String(24 * 60 * 60_000), 10); // 24 h
-const REFRESH_TOKEN_TTL_MS = 30 * 24 * 60 * 60_000; // 30 days
-const AUTH_CODE_TTL_MS     = 5 * 60_000;             // 5 minutes
+// Secret used to sign all tokens — falls back to MCP_API_KEY if not set separately
+const TOKEN_SECRET = process.env.OAUTH_TOKEN_SECRET?.trim()
+  ?? process.env.MCP_API_KEY?.trim()
+  ?? "dev-insecure-secret-set-OAUTH_TOKEN_SECRET-in-production";
 
-// ── Token storage ────────────────────────────────────────────────
-interface AuthCodeEntry  { clientId: string; redirectUri: string; scope: string; expiresAt: number; }
-interface AccessEntry    { clientId: string; scope: string; expiresAt: number; }
-interface RefreshEntry   { clientId: string; scope: string; expiresAt: number; }
+const ACCESS_TOKEN_TTL_MS  = parseInt(process.env.OAUTH_TOKEN_TTL ?? String(24 * 60 * 60_000), 10);
+const REFRESH_TOKEN_TTL_MS = 30 * 24 * 60 * 60_000;
+const AUTH_CODE_TTL_MS     = 5 * 60_000;
 
-const authCodes    = new Map<string, AuthCodeEntry>();
-const accessTokens = new Map<string, AccessEntry>();
-const refreshTokens = new Map<string, RefreshEntry>();
-
-// Prune expired entries every minute
-setInterval(() => {
-  const now = Date.now();
-  for (const [k, v] of authCodes)     if (now > v.expiresAt) authCodes.delete(k);
-  for (const [k, v] of accessTokens)  if (now > v.expiresAt) accessTokens.delete(k);
-  for (const [k, v] of refreshTokens) if (now > v.expiresAt) refreshTokens.delete(k);
-}, 60_000).unref();
-
-// ── Helpers ───────────────────────────────────────────────────────
-function generateToken(bytes = 32): string {
-  return crypto.randomBytes(bytes).toString("base64url");
+// ── Stateless token helpers ───────────────────────────────────────
+interface TokenPayload {
+  t:   "code" | "access" | "refresh"; // type
+  cid: string;   // clientId
+  ruri?: string; // redirectUri (auth codes only)
+  scp: string;   // scope
+  exp: number;   // expiry (ms epoch)
 }
 
+function signToken(payload: TokenPayload): string {
+  const data = Buffer.from(JSON.stringify(payload)).toString("base64url");
+  const sig  = crypto.createHmac("sha256", TOKEN_SECRET).update(data).digest("base64url");
+  return `${data}.${sig}`;
+}
+
+function verifyToken(token: string): TokenPayload | null {
+  const dot = token.lastIndexOf(".");
+  if (dot < 0) return null;
+  const data     = token.slice(0, dot);
+  const sig      = token.slice(dot + 1);
+  const expected = crypto.createHmac("sha256", TOKEN_SECRET).update(data).digest("base64url");
+  // Constant-time compare
+  const sigBuf = Buffer.from(sig);
+  const expBuf = Buffer.from(expected);
+  if (sigBuf.length !== expBuf.length) return null;
+  if (!crypto.timingSafeEqual(sigBuf, expBuf)) return null;
+  try {
+    const payload = JSON.parse(Buffer.from(data, "base64url").toString("utf8")) as TokenPayload;
+    if (Date.now() > payload.exp) return null;
+    return payload;
+  } catch {
+    return null;
+  }
+}
+
+// ── Helpers ───────────────────────────────────────────────────────
 export function safeCompare(a: string, b: string): boolean {
-  // Always run full loop to be constant-time even when lengths differ
   const aBytes = Buffer.from(a);
   const bBytes = Buffer.from(b);
   const len    = Math.max(aBytes.length, bBytes.length);
@@ -63,21 +81,17 @@ export function isRedirectUriAllowed(uri: string): boolean {
   if (allowlist) {
     return allowlist.split(",").map(s => s.trim()).some(pattern => {
       if (pattern.endsWith("*")) {
-        // Prefix wildcard: "https://chatgpt.com/connector/oauth/*"
         return uri.startsWith(pattern.slice(0, -1));
       }
       return uri === pattern;
     });
   }
-  // Default: allow any https:// URI (required for ChatGPT callback)
   return uri.startsWith("https://");
 }
 
 // ── Auth code ────────────────────────────────────────────────────
 export function createAuthCode(clientId: string, redirectUri: string, scope: string): string {
-  const code = generateToken(24);
-  authCodes.set(code, { clientId, redirectUri, scope, expiresAt: Date.now() + AUTH_CODE_TTL_MS });
-  return code;
+  return signToken({ t: "code", cid: clientId, ruri: redirectUri, scp: scope, exp: Date.now() + AUTH_CODE_TTL_MS });
 }
 
 // ── Token response shape ─────────────────────────────────────────
@@ -90,10 +104,8 @@ export interface TokenResponse {
 }
 
 function issueTokenPair(clientId: string, scope: string): TokenResponse {
-  const access  = generateToken(32);
-  const refresh = generateToken(32);
-  accessTokens.set(access,  { clientId, scope, expiresAt: Date.now() + ACCESS_TOKEN_TTL_MS });
-  refreshTokens.set(refresh, { clientId, scope, expiresAt: Date.now() + REFRESH_TOKEN_TTL_MS });
+  const access  = signToken({ t: "access",  cid: clientId, scp: scope, exp: Date.now() + ACCESS_TOKEN_TTL_MS });
+  const refresh = signToken({ t: "refresh", cid: clientId, scp: scope, exp: Date.now() + REFRESH_TOKEN_TTL_MS });
   return {
     access_token:  access,
     token_type:    "Bearer",
@@ -111,15 +123,11 @@ export function exchangeCode(
   redirectUri: string,
 ): TokenResponse | null {
   if (!validateClientCredentials(clientId, clientSecret)) return null;
-
-  const entry = authCodes.get(code);
-  if (!entry) return null;
-  if (Date.now() > entry.expiresAt)       { authCodes.delete(code); return null; }
-  if (!safeCompare(entry.clientId, clientId))          return null;
-  if (!safeCompare(entry.redirectUri, redirectUri))     return null;
-
-  authCodes.delete(code); // single-use
-  return issueTokenPair(clientId, entry.scope);
+  const p = verifyToken(code);
+  if (!p || p.t !== "code") return null;
+  if (!safeCompare(p.cid, clientId))         return null;
+  if (p.ruri && !safeCompare(p.ruri, redirectUri)) return null;
+  return issueTokenPair(clientId, p.scp);
 }
 
 // ── Grant: refresh_token ─────────────────────────────────────────
@@ -129,28 +137,23 @@ export function rotateRefreshToken(
   clientSecret: string,
 ): TokenResponse | null {
   if (!validateClientCredentials(clientId, clientSecret)) return null;
-
-  const entry = refreshTokens.get(refreshToken);
-  if (!entry) return null;
-  if (Date.now() > entry.expiresAt)                { refreshTokens.delete(refreshToken); return null; }
-  if (!safeCompare(entry.clientId, clientId))       return null;
-
-  refreshTokens.delete(refreshToken); // rotate: old token is invalidated
-  return issueTokenPair(clientId, entry.scope);
+  const p = verifyToken(refreshToken);
+  if (!p || p.t !== "refresh") return null;
+  if (!safeCompare(p.cid, clientId)) return null;
+  return issueTokenPair(clientId, p.scp);
 }
 
 // ── Token introspection ───────────────────────────────────────────
 export function validateAccessToken(token: string): { clientId: string; scope: string } | null {
-  const entry = accessTokens.get(token);
-  if (!entry) return null;
-  if (Date.now() > entry.expiresAt) { accessTokens.delete(token); return null; }
-  return { clientId: entry.clientId, scope: entry.scope };
+  const p = verifyToken(token);
+  if (!p || p.t !== "access") return null;
+  return { clientId: p.cid, scope: p.scp };
 }
 
-// ── Revocation ────────────────────────────────────────────────────
-export function revokeToken(token: string): void {
-  accessTokens.delete(token);
-  refreshTokens.delete(token);
+// ── Revocation (stateless — tokens naturally expire) ─────────────
+export function revokeToken(_token: string): void {
+  // Stateless tokens can't be revoked from memory, but we return 200 per RFC 7009.
+  // Tokens expire on their own within ACCESS_TOKEN_TTL_MS / REFRESH_TOKEN_TTL_MS.
 }
 
 // ── HTML helpers (XSS-safe) ───────────────────────────────────────
