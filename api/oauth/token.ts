@@ -30,7 +30,18 @@ function sendJSON(res: ServerResponse, status: number, body: unknown): void {
   res.end(payload);
 }
 
-function readRawBody(req: IncomingMessage): Promise<string> {
+function readBody(req: IncomingMessage): Promise<string> {
+  const preparsed = (req as IncomingMessage & { body?: unknown }).body;
+  if (preparsed !== undefined) {
+    if (typeof preparsed === "string") return Promise.resolve(preparsed);
+    if (typeof preparsed === "object" && preparsed !== null) {
+      return Promise.resolve(
+        Object.entries(preparsed as Record<string, string>)
+          .map(([k, v]) => `${encodeURIComponent(k)}=${encodeURIComponent(v ?? "")}`)
+          .join("&")
+      );
+    }
+  }
   return new Promise((resolve, reject) => {
     const chunks: Buffer[] = [];
     req.on("data", (c: Buffer) => chunks.push(c));
@@ -47,7 +58,7 @@ export default async function handler(req: IncomingMessage, res: ServerResponse)
   if (req.method === "OPTIONS") { res.writeHead(204); res.end(); return; }
   if (req.method !== "POST")    { sendJSON(res, 405, { error: "Method Not Allowed" }); return; }
 
-  const raw  = await readRawBody(req);
+  const raw  = await readBody(req);
   const body = qs.parse(raw) as Record<string, string>;
 
   const grantType = body["grant_type"] ?? "";
