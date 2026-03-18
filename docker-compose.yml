@@ -14,6 +14,13 @@ services:
       # Set these in Dokploy's environment variable UI — do NOT hardcode secrets here
       GEMINI_API_KEY: ${GEMINI_API_KEY}
       MCP_API_KEY: ${MCP_API_KEY}
+      # OAuth 2.0
+      OAUTH_CLIENT_ID: ${OAUTH_CLIENT_ID}
+      OAUTH_CLIENT_SECRET: ${OAUTH_CLIENT_SECRET}
+      OAUTH_USERNAME: ${OAUTH_USERNAME:-admin}
+      OAUTH_PASSWORD: ${OAUTH_PASSWORD}
+      OAUTH_TOKEN_TTL: ${OAUTH_TOKEN_TTL:-86400000}
+      OAUTH_REDIRECT_URIS: ${OAUTH_REDIRECT_URIS:-}
     healthcheck:
       test: ["CMD", "wget", "-qO-", "http://localhost:3000/health"]
       interval: 30s

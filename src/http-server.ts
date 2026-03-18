@@ -3,9 +3,24 @@
 //  Runs the MCP Streamable HTTP transport over plain Node.js http
 // ─────────────────────────────────────────────
 import * as http from "http";
+import * as qs from "querystring";
 import * as dotenv from "dotenv";
 import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
 import { createServer } from "./server";
+import {
+  safeCompare,
+  validateAccessToken,
+  validateClientCredentials,
+  validateUserCredentials,
+  isRedirectUriAllowed,
+  createAuthCode,
+  exchangeCode,
+  rotateRefreshToken,
+  revokeToken,
+  renderAuthorizePage,
+  OAUTH_CLIENT_ID,
+  OAUTH_PASSWORD,
+} from "./oauth";
 
 dotenv.config();
 
@@ -54,18 +69,54 @@ function getClientIP(req: http.IncomingMessage): string {
 }
 
 // ── Security ──────────────────────────────────────────────────────
-function safeCompare(a: string, b: string): boolean {
-  if (a.length !== b.length) return false;
-  let diff = 0;
-  for (let i = 0; i < a.length; i++) diff |= a.charCodeAt(i) ^ b.charCodeAt(i);
-  return diff === 0;
-}
-
 function isAuthorized(req: http.IncomingMessage): boolean {
-  if (!API_KEY) return false;
   const header = (req.headers["authorization"] ?? "") as string;
   if (!header.startsWith("Bearer ")) return false;
-  return safeCompare(header.slice(7), API_KEY);
+  const token = header.slice(7);
+
+  // 1. Accept static MCP_API_KEY (backward-compatible)
+  if (API_KEY && safeCompare(token, API_KEY)) return true;
+
+  // 2. Accept live OAuth access token
+  if (validateAccessToken(token)) return true;
+
+  return false;
+}
+
+// Parse URL-encoded form body (for OAuth endpoints)
+async function parseFormBody(req: http.IncomingMessage): Promise<Record<string, string>> {
+  return new Promise((resolve, reject) => {
+    const chunks: Buffer[] = [];
+    let received = 0;
+    req.on("data", (chunk: Buffer) => {
+      received += chunk.length;
+      if (received > 64_000) { req.destroy(new Error("PAYLOAD_TOO_LARGE")); return; }
+      chunks.push(chunk);
+    });
+    req.on("end", () => {
+      const raw = Buffer.concat(chunks).toString("utf8");
+      const parsed = qs.parse(raw) as Record<string, string>;
+      resolve(parsed);
+    });
+    req.on("error", reject);
+  });
+}
+
+// Extract client credentials: body params take precedence, then Basic auth header
+function extractClientCredentials(
+  body: Record<string, string>,
+  req: http.IncomingMessage,
+): { clientId: string; clientSecret: string } {
+  if (body["client_id"] && body["client_secret"]) {
+    return { clientId: body["client_id"], clientSecret: body["client_secret"] };
+  }
+  const authHeader = (req.headers["authorization"] ?? "") as string;
+  if (authHeader.startsWith("Basic ")) {
+    const decoded = Buffer.from(authHeader.slice(6), "base64").toString("utf8");
+    const [clientId, ...rest] = decoded.split(":");
+    return { clientId: clientId ?? "", clientSecret: rest.join(":") };
+  }
+  return { clientId: "", clientSecret: "" };
 }
 
 // ── Helpers ───────────────────────────────────────────────────────
@@ -153,8 +204,136 @@ async function handleRequest(req: http.IncomingMessage, res: http.ServerResponse
       version: "1.0.0",
       mcpEndpoint: "/api/mcp",
       transport: "Streamable HTTP (stateless)",
-      auth: "Authorization: Bearer <MCP_API_KEY>",
+      auth: "OAuth 2.0 (Authorization Code) or static Bearer token",
+      oauth: {
+        authorization_url: "/oauth/authorize",
+        token_url:         "/oauth/token",
+        revocation_url:    "/oauth/revoke",
+        grant_types:       ["authorization_code", "refresh_token"],
+        scope:             "mcp",
+      },
     });
+    return;
+  }
+
+  // ── Route: OAuth – GET /oauth/authorize (show login form) ────
+  if (method === "GET" && url?.startsWith("/oauth/authorize")) {
+    const urlObj      = new URL(url, "http://localhost");
+    const clientId    = urlObj.searchParams.get("client_id")    ?? "";
+    const redirectUri = urlObj.searchParams.get("redirect_uri") ?? "";
+    const scope       = urlObj.searchParams.get("scope")        ?? "mcp";
+    const state       = urlObj.searchParams.get("state")        ?? "";
+    const respType    = urlObj.searchParams.get("response_type") ?? "";
+
+    if (respType !== "code") {
+      sendJSON(res, 400, { error: "unsupported_response_type" });
+      return;
+    }
+    if (!clientId || !safeCompare(clientId, OAUTH_CLIENT_ID)) {
+      sendJSON(res, 400, { error: "invalid_client" });
+      return;
+    }
+    if (!redirectUri || !isRedirectUriAllowed(redirectUri)) {
+      sendJSON(res, 400, { error: "invalid_redirect_uri" });
+      return;
+    }
+
+    // Loosen CSP for the login page so the form and styles render
+    res.setHeader("Content-Security-Policy", "default-src 'none'; style-src 'unsafe-inline'; form-action 'self'");
+    res.writeHead(200, { "Content-Type": "text/html; charset=utf-8" });
+    res.end(renderAuthorizePage({ clientId, redirectUri, scope, state }));
+    return;
+  }
+
+  // ── Route: OAuth – POST /oauth/authorize (process login) ─────
+  if (method === "POST" && url?.startsWith("/oauth/authorize")) {
+    const body        = await parseFormBody(req);
+    const clientId    = body["client_id"]    ?? "";
+    const redirectUri = body["redirect_uri"] ?? "";
+    const scope       = body["scope"]        ?? "mcp";
+    const state       = body["state"]        ?? "";
+    const username    = body["username"]     ?? "";
+    const password    = body["password"]     ?? "";
+
+    const rerender = (error: string): void => {
+      res.setHeader("Content-Security-Policy", "default-src 'none'; style-src 'unsafe-inline'; form-action 'self'");
+      res.writeHead(400, { "Content-Type": "text/html; charset=utf-8" });
+      res.end(renderAuthorizePage({ clientId, redirectUri, scope, state, error }));
+    };
+
+    if (!safeCompare(clientId, OAUTH_CLIENT_ID)) { rerender("Invalid client."); return; }
+    if (!isRedirectUriAllowed(redirectUri))       { rerender("Invalid redirect URI."); return; }
+
+    if (!OAUTH_PASSWORD || !validateUserCredentials(username, password)) {
+      log("WARN", "oauth_login_failed", { ip, username });
+      rerender("Invalid username or password.");
+      return;
+    }
+
+    const code    = createAuthCode(clientId, redirectUri, scope);
+    const target  = new URL(redirectUri);
+    target.searchParams.set("code",  code);
+    if (state) target.searchParams.set("state", state);
+
+    log("INFO", "oauth_code_issued", { ip, clientId });
+    res.writeHead(302, { Location: target.toString() });
+    res.end();
+    return;
+  }
+
+  // ── Route: OAuth – POST /oauth/token ─────────────────────────
+  if (method === "POST" && url === "/oauth/token") {
+    const body       = await parseFormBody(req);
+    const grantType  = body["grant_type"] ?? "";
+    const { clientId, clientSecret } = extractClientCredentials(body, req);
+
+    if (!validateClientCredentials(clientId, clientSecret)) {
+      sendJSON(res, 401, { error: "invalid_client" });
+      return;
+    }
+
+    if (grantType === "authorization_code") {
+      const code        = body["code"]         ?? "";
+      const redirectUri = body["redirect_uri"] ?? "";
+      const tokens = exchangeCode(code, clientId, clientSecret, redirectUri);
+      if (!tokens) {
+        sendJSON(res, 400, { error: "invalid_grant", error_description: "Code invalid or expired" });
+        return;
+      }
+      log("INFO", "oauth_token_issued", { ip, clientId, grant: "authorization_code" });
+      sendJSON(res, 200, tokens);
+      return;
+    }
+
+    if (grantType === "refresh_token") {
+      const refreshToken = body["refresh_token"] ?? "";
+      const tokens = rotateRefreshToken(refreshToken, clientId, clientSecret);
+      if (!tokens) {
+        sendJSON(res, 400, { error: "invalid_grant", error_description: "Refresh token invalid or expired" });
+        return;
+      }
+      log("INFO", "oauth_token_issued", { ip, clientId, grant: "refresh_token" });
+      sendJSON(res, 200, tokens);
+      return;
+    }
+
+    sendJSON(res, 400, { error: "unsupported_grant_type" });
+    return;
+  }
+
+  // ── Route: OAuth – POST /oauth/revoke ─────────────────────────
+  if (method === "POST" && url === "/oauth/revoke") {
+    const body  = await parseFormBody(req);
+    const token = body["token"] ?? "";
+    const { clientId, clientSecret } = extractClientCredentials(body, req);
+    if (!validateClientCredentials(clientId, clientSecret)) {
+      sendJSON(res, 401, { error: "invalid_client" });
+      return;
+    }
+    revokeToken(token);
+    log("INFO", "oauth_token_revoked", { ip, clientId });
+    res.writeHead(200, { "Content-Type": "application/json" });
+    res.end("{}"); // RFC 7009: always 200, even if token not found
     return;
   }
 
