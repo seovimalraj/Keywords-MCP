@@ -46,7 +46,6 @@ export default function handler(req: VercelRequest, res: VercelResponse): void {
       return;
     }
 
-    res.setHeader("Content-Security-Policy", "default-src 'none'; style-src 'unsafe-inline'; form-action 'self'");
     res.status(200).send(renderAuthorizePage({ clientId, redirectUri, scope, state }));
     return;
   }
@@ -62,7 +61,6 @@ export default function handler(req: VercelRequest, res: VercelResponse): void {
     const password    = body["password"]     ?? "";
 
     const rerender = (error: string): void => {
-      res.setHeader("Content-Security-Policy", "default-src 'none'; style-src 'unsafe-inline'; form-action 'self'");
       res.status(400).send(renderAuthorizePage({ clientId, redirectUri, scope, state, error }));
     };
 
