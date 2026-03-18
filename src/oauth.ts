@@ -126,7 +126,8 @@ export function exchangeCode(
   const p = verifyToken(code);
   if (!p || p.t !== "code") return null;
   if (!safeCompare(p.cid, clientId))         return null;
-  if (p.ruri && !safeCompare(p.ruri, redirectUri)) return null;
+  // Only validate redirect_uri if the token request actually provides one
+  if (p.ruri && redirectUri && !safeCompare(p.ruri, redirectUri)) return null;
   return issueTokenPair(clientId, p.scp);
 }
 

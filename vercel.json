@@ -7,6 +7,7 @@
     { "src": "api/oauth/authorize.ts",  "use": "@vercel/node" },
     { "src": "api/oauth/token.ts",      "use": "@vercel/node" },
     { "src": "api/oauth/revoke.ts",     "use": "@vercel/node" },
+    { "src": "api/oauth/debug.ts",      "use": "@vercel/node" },
     { "src": "public/**",               "use": "@vercel/static" }
   ],
   "routes": [
@@ -15,6 +16,7 @@
     { "src": "/oauth/authorize",     "dest": "/api/oauth/authorize.ts" },
     { "src": "/oauth/token",         "dest": "/api/oauth/token.ts"     },
     { "src": "/oauth/revoke",        "dest": "/api/oauth/revoke.ts"    },
+    { "src": "/oauth/debug",         "dest": "/api/oauth/debug.ts"     },
     { "src": "/(.*)",                "dest": "/public/$1"              }
   ],
   "headers": [
